@@ -19,7 +19,908 @@
   <title>現場撮影</title>
   <style>
     *, *::before, *::after {<!DOCTYPE html>
+<html lang="ja"><!DOCTYPE html>
 <html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <title>現場撮影</title>
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Helvetica Neue', sans-serif;
+      color: #fff;
+    }
+
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      background: #1c1c1e;
+    }
+
+    @supports (height: 100dvh) {
+      #app { height: 100dvh; }
+    }
+
+    /* ── ヘッダー ── */
+    #header {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      padding: 10px 12px;
+      padding-top: max(10px, env(safe-area-inset-top));
+      background: #1c1c1e;
+      border-bottom: 1px solid #38383a;
+      flex-shrink: 0;
+    }
+
+    #csv-btn {
+      justify-self: start;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 12px;
+      background: #2c2c2e;
+      border: 1px solid #48484a;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    #csv-btn:active { opacity: 0.6; }
+
+    #header h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    #shot-badge {
+      justify-self: end;
+      padding: 3px 10px;
+      background: #ff9500;
+      color: #fff;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 700;
+      display: none;
+    }
+
+    /* ── データソース表示 ── */
+    #data-source-bar {
+      padding: 5px 16px;
+      background: #2c2c2e;
+      border-bottom: 1px solid #38383a;
+      flex-shrink: 0;
+    }
+
+    #data-source-text {
+      font-size: 11px;
+      color: #8e8e93;
+      text-align: center;
+    }
+
+    #data-source-text.loaded {
+      color: #0a84ff;
+    }
+
+    /* ── ドロップダウン ── */
+    #controls {
+      padding: 12px 16px 8px;
+      background: #1c1c1e;
+      flex-shrink: 0;
+    }
+
+    .select-wrapper { margin-bottom: 8px; }
+
+    .select-label {
+      font-size: 11px;
+      font-weight: 700;
+      color: #8e8e93;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+      padding-left: 2px;
+    }
+
+    .select-outer { position: relative; }
+
+    .select-outer select {
+      width: 100%;
+      padding: 12px 40px 12px 14px;
+      font-size: 16px;
+      font-weight: 500;
+      color: #fff;
+      background: #2c2c2e;
+      border: 1.5px solid #48484a;
+      border-radius: 10px;
+      appearance: none;
+      -webkit-appearance: none;
+      outline: none;
+    }
+
+    .select-outer select:focus { border-color: #0a84ff; }
+    .select-outer select:disabled { color: #636366; }
+    .select-outer select option { color: #000; background: #fff; }
+
+    .chevron {
+      position: absolute;
+      right: 13px;
+      top: 50%;
+      transform: translateY(-50%);
+      pointer-events: none;
+      color: #8e8e93;
+    }
+
+    /* ── カメラプレビュー ── */
+    #video-container {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background: #000;
+      min-height: 0;
+    }
+
+    #video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    #camera-overlay {
+      display: none;
+      position: absolute;
+      inset: 0;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 10px;
+      padding: 24px;
+      text-align: center;
+      background: #1c1c1e;
+    }
+
+    #camera-overlay.visible { display: flex; }
+
+    .ov-icon  { font-size: 52px; }
+    .ov-title { font-size: 17px; font-weight: 700; }
+    .ov-sub   { font-size: 14px; color: #8e8e93; line-height: 1.6; }
+
+    #retry-btn {
+      display: none;
+      margin-top: 8px;
+      padding: 12px 28px;
+      background: #0a84ff;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    /* ── ボトムバー ── */
+    #bottom-bar {
+      flex-shrink: 0;
+      background: #1c1c1e;
+      border-top: 1px solid #38383a;
+    }
+
+    #filename-bar { padding: 5px 16px 6px; border-bottom: 1px solid #38383a; }
+
+    #filename-display {
+      font-size: 11px;
+      color: #636366;
+      font-family: 'Courier New', Courier, monospace;
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    #filename-display.ready { color: #30d158; }
+
+    #btn-area {
+      padding: 12px 16px;
+      padding-bottom: max(16px, env(safe-area-inset-bottom));
+    }
+
+    #capture-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      height: 62px;
+      background: #ff9500;
+      color: #fff;
+      border: none;
+      border-radius: 14px;
+      font-size: 20px;
+      font-weight: 700;
+      cursor: pointer;
+      letter-spacing: 0.3px;
+      transition: transform 0.08s, opacity 0.08s;
+    }
+
+    #capture-btn:active { transform: scale(0.96); opacity: 0.8; }
+    #capture-btn:disabled { background: #38383a; color: #636366; }
+
+    /* ── シャッターフラッシュ ── */
+    #flash {
+      position: fixed;
+      inset: 0;
+      background: #fff;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 9000;
+      transition: opacity 0.35s ease-out;
+    }
+
+    #flash.flash-on { opacity: 1; transition: none; }
+
+    /* ── 撮影後モーダル ── */
+    #modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.97);
+      z-index: 9999;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      padding-top: max(16px, env(safe-area-inset-top));
+      padding-bottom: max(16px, env(safe-area-inset-bottom));
+    }
+
+    #modal.visible { display: flex; }
+
+    #modal-status {
+      font-size: 16px;
+      font-weight: 700;
+      color: #30d158;
+      margin-bottom: 12px;
+      text-align: center;
+    }
+
+    #modal-img {
+      max-width: 100%;
+      max-height: 48vh;
+      object-fit: contain;
+      border-radius: 10px;
+      border: 1px solid #3a3a3c;
+    }
+
+    #modal-filename {
+      margin-top: 10px;
+      font-size: 11px;
+      color: #8e8e93;
+      font-family: 'Courier New', monospace;
+      text-align: center;
+      word-break: break-all;
+    }
+
+    #modal-hints {
+      margin-top: 10px;
+      width: 100%;
+      padding: 10px 14px;
+      background: #2c2c2e;
+      border-radius: 10px;
+      font-size: 13px;
+      line-height: 1.75;
+    }
+
+    .hint-row { display: flex; gap: 8px; align-items: flex-start; }
+    .hint-row + .hint-row { margin-top: 4px; }
+    .hint-icon { flex-shrink: 0; font-size: 15px; }
+    .hint-text { color: #ebebf5; }
+    .hint-em { color: #ff9500; font-weight: 700; }
+
+    #modal-buttons { display: flex; gap: 10px; margin-top: 14px; width: 100%; }
+
+    .modal-btn {
+      flex: 1;
+      height: 52px;
+      border: none;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .modal-btn:active { opacity: 0.75; }
+    #btn-close { background: #3a3a3c; color: #fff; }
+    #btn-save  { background: #0a84ff; color: #fff; }
+
+    /* ── トースト通知 ── */
+    #toast {
+      position: fixed;
+      bottom: 110px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(30, 30, 30, 0.92);
+      color: #fff;
+      padding: 10px 20px;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: 500;
+      z-index: 8000;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s;
+      white-space: nowrap;
+      border: 1px solid #48484a;
+    }
+
+    #toast.show { opacity: 1; }
+
+    /* ── CSVフォーマットガイド ── */
+    #csv-guide {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.95);
+      z-index: 9999;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      padding-top: max(24px, env(safe-area-inset-top));
+      padding-bottom: max(24px, env(safe-area-inset-bottom));
+    }
+
+    #csv-guide.visible { display: flex; }
+
+    #csv-guide h2 {
+      margin: 0 0 16px;
+      font-size: 18px;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    .guide-box {
+      width: 100%;
+      background: #2c2c2e;
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+
+    .guide-box p {
+      margin: 0 0 8px;
+      font-size: 13px;
+      color: #8e8e93;
+      line-height: 1.6;
+    }
+
+    .guide-box pre {
+      margin: 0;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      color: #30d158;
+      background: #1c1c1e;
+      padding: 10px;
+      border-radius: 8px;
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    #guide-close-btn {
+      width: 100%;
+      height: 52px;
+      background: #0a84ff;
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      font-size: 17px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 4px;
+    }
+
+    #guide-load-btn {
+      width: 100%;
+      height: 52px;
+      background: #ff9500;
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      font-size: 17px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-bottom: 10px;
+    }
+
+    canvas { display: none; }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ヘッダー -->
+  <div id="header">
+    <button id="csv-btn">
+      <span>📂</span>
+      <span>CSV読込</span>
+    </button>
+    <h1>現場撮影</h1>
+    <span id="shot-badge"></span>
+  </div>
+
+  <!-- データソース表示 -->
+  <div id="data-source-bar">
+    <div id="data-source-text">初期データを使用中</div>
+  </div>
+
+  <!-- ドロップダウン -->
+  <div id="controls">
+    <div class="select-wrapper">
+      <div class="select-label">橋名</div>
+      <div class="select-outer">
+        <select id="bridge-select">
+          <option value="">橋名を選択してください</option>
+        </select>
+        <svg class="chevron" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M7 10l5 5 5-5z"/>
+        </svg>
+      </div>
+    </div>
+    <div class="select-wrapper">
+      <div class="select-label">撮影ポイント</div>
+      <div class="select-outer">
+        <select id="point-select" disabled>
+          <option value="">橋名を先に選択してください</option>
+        </select>
+        <svg class="chevron" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M7 10l5 5 5-5z"/>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- カメラプレビュー -->
+  <div id="video-container">
+    <video id="video" autoplay playsinline muted></video>
+    <div id="camera-overlay" class="visible">
+      <div class="ov-icon">📷</div>
+      <div class="ov-title">カメラを起動中...</div>
+      <div class="ov-sub">カメラの使用許可を求められたら「許可」を選択してください。</div>
+      <button id="retry-btn">再試行</button>
+    </div>
+  </div>
+
+  <!-- ボトムバー -->
+  <div id="bottom-bar">
+    <div id="filename-bar">
+      <div id="filename-display">橋名と撮影ポイントを選択してください</div>
+    </div>
+    <div id="btn-area">
+      <button id="capture-btn" disabled>
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 15.2A3.2 3.2 0 0 1 8.8 12 3.2 3.2 0 0 1 12 8.8 3.2 3.2 0 0 1 15.2 12 3.2 3.2 0 0 1 12 15.2M9 3 7.17 5H4C2.9 5 2 5.9 2 7v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2h-3.17L15 3H9m3 14a5 5 0 0 0 5-5 5 5 0 0 0-5-5 5 5 0 0 0-5 5 5 5 0 0 0 5 5z"/>
+        </svg>
+        <span>撮影して保存</span>
+      </button>
+    </div>
+  </div>
+
+</div>
+
+<!-- シャッターフラッシュ -->
+<div id="flash"></div>
+
+<!-- 撮影後モーダル -->
+<div id="modal">
+  <div id="modal-status">✅ 撮影完了</div>
+  <img id="modal-img" src="" alt="撮影画像">
+  <div id="modal-filename"></div>
+  <div id="modal-hints">
+    <div class="hint-row">
+      <span class="hint-icon">📱</span>
+      <span class="hint-text"><span class="hint-em">写真アプリに保存：</span>上の画像を<span class="hint-em">長押し</span>→「写真に追加」</span>
+    </div>
+    <div class="hint-row">
+      <span class="hint-icon">📁</span>
+      <span class="hint-text"><span class="hint-em">ファイルに保存：</span>下の「ファイルに保存」ボタンを押す</span>
+    </div>
+  </div>
+  <div id="modal-buttons">
+    <button class="modal-btn" id="btn-close">閉じる</button>
+    <button class="modal-btn" id="btn-save">ファイルに保存</button>
+  </div>
+</div>
+
+<!-- CSV フォーマットガイド -->
+<div id="csv-guide">
+  <h2>📂 CSVファイルの読み込み</h2>
+  <div class="guide-box">
+    <p>以下の形式で作成した CSV ファイルを読み込んでください。<br>
+       Excel で編集後、「名前を付けて保存 → CSV UTF-8」で保存できます。</p>
+    <pre>橋名,撮影ポイント
+あやめ橋,A1橋台-前面
+あやめ橋,A2橋台-背面
+新大滝橋,起点側-全景
+新大滝橋,P1橋脚-支承部</pre>
+  </div>
+  <button id="guide-load-btn">📂 CSVファイルを選択</button>
+  <button id="guide-close-btn">閉じる</button>
+</div>
+
+<!-- 非表示の file input -->
+<input type="file" id="csv-input" accept=".csv" style="display:none">
+
+<!-- トースト -->
+<div id="toast"></div>
+
+<canvas id="canvas"></canvas>
+
+<script>
+'use strict';
+
+// ─── デフォルトマスタデータ ───────────────────────────────────────
+const DEFAULT_BRIDGES = {
+  'あやめ橋': ['A1橋台-前面', 'A2橋台-背面', 'P1橋脚-側面', '床版下面-一般部', '主桁-中央部'],
+  '新大滝橋': ['起点側-全景', '終点側-全景', 'P1橋脚-支承部', 'P2橋脚-柱部', '高欄-左側'],
+  'みなと高架橋': ['地覆-外側', '伸縮装置-A1側', '排水ます-P3付近', '桁下面-剥離箇所'],
+};
+
+const STORAGE_KEY  = 'field-camera-bridges';
+const FILENAME_KEY = 'field-camera-filename';
+
+// ─── 状態 ────────────────────────────────────────────────────────
+let BRIDGES    = loadBridgesFromStorage();
+let cameraReady = false;
+let shotCount   = 0;
+let savedDataUrl   = null;
+let savedFilename  = null;
+
+// ─── DOM ─────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const bridgeSel      = $('bridge-select');
+const pointSel       = $('point-select');
+const video          = $('video');
+const captureBtn     = $('capture-btn');
+const canvas         = $('canvas');
+const filenameDisp   = $('filename-display');
+const shotBadge      = $('shot-badge');
+const flash          = $('flash');
+const modal          = $('modal');
+const modalImg       = $('modal-img');
+const modalFilenameEl= $('modal-filename');
+const btnClose       = $('btn-close');
+const btnSave        = $('btn-save');
+const cameraOverlay  = $('camera-overlay');
+const ovTitle        = cameraOverlay.querySelector('.ov-title');
+const ovSub          = cameraOverlay.querySelector('.ov-sub');
+const retryBtn       = $('retry-btn');
+const csvBtn         = $('csv-btn');
+const csvInput       = $('csv-input');
+const csvGuide       = $('csv-guide');
+const guideLoadBtn   = $('guide-load-btn');
+const guideCloseBtn  = $('guide-close-btn');
+const dataSourceText = $('data-source-text');
+const toast          = $('toast');
+
+// ─── localStorage ────────────────────────────────────────────────
+function loadBridgesFromStorage() {
+  try {
+    const json = localStorage.getItem(STORAGE_KEY);
+    if (json) {
+      const parsed = JSON.parse(json);
+      if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
+        return parsed;
+      }
+    }
+  } catch (_) {}
+  return { ...DEFAULT_BRIDGES };
+}
+
+function saveBridgesToStorage(bridges, filename) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(bridges));
+    if (filename) localStorage.setItem(FILENAME_KEY, filename);
+  } catch (_) {}
+}
+
+function loadedFilename() {
+  return localStorage.getItem(FILENAME_KEY) || null;
+}
+
+// ─── データソース表示 ─────────────────────────────────────────────
+function updateDataSourceBar() {
+  const fname = loadedFilename();
+  if (fname) {
+    dataSourceText.textContent = `読込済: ${fname}`;
+    dataSourceText.classList.add('loaded');
+  } else {
+    dataSourceText.textContent = '初期データを使用中';
+    dataSourceText.classList.remove('loaded');
+  }
+}
+
+// ─── CSV パース ───────────────────────────────────────────────────
+function parseCSV(text) {
+  // BOM 除去
+  text = text.replace(/^﻿/, '');
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+
+  if (lines.length < 2) return null;
+
+  // ヘッダー行をスキップ（1行目）
+  const bridges = {};
+  for (let i = 1; i < lines.length; i++) {
+    // カンマ区切り（引用符付きフィールドに簡易対応）
+    const cols = lines[i].split(',').map(c => c.replace(/^"|"$/g, '').trim());
+    const bridge = cols[0];
+    const point  = cols[1];
+    if (!bridge || !point) continue;
+    if (!bridges[bridge]) bridges[bridge] = [];
+    if (!bridges[bridge].includes(point)) bridges[bridge].push(point);
+  }
+
+  return Object.keys(bridges).length > 0 ? bridges : null;
+}
+
+// ─── CSV 読み込み処理 ─────────────────────────────────────────────
+function handleCSVFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const bridges = parseCSV(e.target.result);
+    if (!bridges) {
+      showToast('❌ CSVの形式が正しくありません');
+      return;
+    }
+    BRIDGES = bridges;
+    saveBridgesToStorage(bridges, file.name);
+    rebuildDropdowns();
+    updateDataSourceBar();
+    csvGuide.classList.remove('visible');
+
+    const bridgeCount = Object.keys(bridges).length;
+    const pointCount  = Object.values(bridges).reduce((s, a) => s + a.length, 0);
+    showToast(`✅ ${bridgeCount}橋・${pointCount}ポイントを読み込みました`);
+  };
+  reader.onerror = () => showToast('❌ ファイルの読み込みに失敗しました');
+  reader.readAsText(file, 'UTF-8');
+}
+
+// ─── ドロップダウン構築 ───────────────────────────────────────────
+function rebuildDropdowns() {
+  bridgeSel.innerHTML = '<option value="">橋名を選択してください</option>';
+  Object.keys(BRIDGES).forEach(name => {
+    bridgeSel.appendChild(new Option(name, name));
+  });
+  pointSel.innerHTML = '<option value="">橋名を先に選択してください</option>';
+  pointSel.disabled = true;
+  refreshUI();
+}
+
+function onBridgeChange() {
+  const bridge = bridgeSel.value;
+  pointSel.innerHTML = '';
+
+  if (!bridge) {
+    pointSel.appendChild(new Option('橋名を先に選択してください', ''));
+    pointSel.disabled = true;
+  } else {
+    pointSel.appendChild(new Option('撮影ポイントを選択してください', ''));
+    (BRIDGES[bridge] || []).forEach(p => pointSel.appendChild(new Option(p, p)));
+    pointSel.disabled = false;
+  }
+  refreshUI();
+}
+
+// ─── ファイル名 & UI 更新 ─────────────────────────────────────────
+function buildFilename() {
+  const b = bridgeSel.value;
+  const p = pointSel.value;
+  if (!b || !p) return null;
+  return `${b}_${p}.jpg`;
+}
+
+function refreshUI() {
+  const name = buildFilename();
+  if (name) {
+    filenameDisp.textContent = name;
+    filenameDisp.classList.add('ready');
+    captureBtn.disabled = !cameraReady;
+  } else {
+    filenameDisp.textContent = bridgeSel.value
+      ? '撮影ポイントを選択してください'
+      : '橋名と撮影ポイントを選択してください';
+    filenameDisp.classList.remove('ready');
+    captureBtn.disabled = true;
+  }
+}
+
+setInterval(refreshUI, 1000);
+
+// ─── カメラ起動 ───────────────────────────────────────────────────
+async function startCamera() {
+  cameraOverlay.classList.add('visible');
+  ovTitle.textContent    = 'カメラを起動中...';
+  ovSub.textContent      = 'カメラの使用許可を求められたら「許可」を選択してください。';
+  retryBtn.style.display = 'none';
+  cameraReady            = false;
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 960 }, aspectRatio: { ideal: 4/3 } },
+      audio: false,
+    });
+    video.srcObject = stream;
+    await video.play();
+    cameraOverlay.classList.remove('visible');
+    cameraReady = true;
+    refreshUI();
+  } catch (err) {
+    console.error('Camera:', err);
+    if (err.name === 'NotAllowedError') {
+      ovTitle.textContent = 'カメラの許可が必要です';
+      ovSub.textContent   = '設定アプリ → Safari → カメラ → 「許可」に変更してください。';
+    } else if (err.name === 'NotFoundError') {
+      ovTitle.textContent = 'カメラが見つかりません';
+      ovSub.textContent   = 'デバイスにカメラが接続されているか確認してください。';
+    } else if (!location.protocol.startsWith('https') && location.hostname !== 'localhost') {
+      ovTitle.textContent = 'HTTPS接続が必要です';
+      ovSub.textContent   = 'カメラを使用するには HTTPS での接続が必要です。';
+    } else {
+      ovTitle.textContent = 'カメラを起動できません';
+      ovSub.textContent   = err.message || '不明なエラーが発生しました。';
+    }
+    retryBtn.style.display = 'block';
+    refreshUI();
+  }
+}
+
+// ─── 撮影 ────────────────────────────────────────────────────────
+function doCapture() {
+  if (!cameraReady || !video.srcObject) return;
+  const filename = buildFilename();
+  if (!filename) return;
+
+  // 常に 1280×960 (4:3) で出力。動画が異なるアスペクト比の場合は中央クロップ
+  const OUT_W = 1280;
+  const OUT_H = 960;
+  const vw = video.videoWidth  || OUT_W;
+  const vh = video.videoHeight || OUT_H;
+  const srcRatio = vw / vh;
+  const dstRatio = OUT_W / OUT_H;
+  let srcX, srcY, srcW, srcH;
+  if (srcRatio > dstRatio) {
+    srcH = vh;
+    srcW = vh * dstRatio;
+    srcX = (vw - srcW) / 2;
+    srcY = 0;
+  } else {
+    srcW = vw;
+    srcH = vw / dstRatio;
+    srcX = 0;
+    srcY = (vh - srcH) / 2;
+  }
+  canvas.width  = OUT_W;
+  canvas.height = OUT_H;
+  canvas.getContext('2d').drawImage(video, srcX, srcY, srcW, srcH, 0, 0, OUT_W, OUT_H);
+
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+  savedDataUrl  = dataUrl;
+  savedFilename = filename;
+
+  // フラッシュ
+  flash.classList.add('flash-on');
+  requestAnimationFrame(() => requestAnimationFrame(() => flash.classList.remove('flash-on')));
+
+  if (navigator.vibrate) navigator.vibrate(50);
+
+  shotCount++;
+  shotBadge.textContent  = `${shotCount}枚`;
+  shotBadge.style.display = 'block';
+
+  modalImg.src = dataUrl;
+  modalFilenameEl.textContent = filename;
+  modal.classList.add('visible');
+
+  triggerDownload(dataUrl, filename);
+}
+
+// ─── ダウンロード ─────────────────────────────────────────────────
+function triggerDownload(dataUrl, filename) {
+  try {
+    const b64    = dataUrl.split(',')[1];
+    const binary = atob(b64);
+    const buf    = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) buf[i] = binary.charCodeAt(i);
+    const blob = new Blob([buf], { type: 'image/jpeg' });
+    const url  = URL.createObjectURL(blob);
+    const a    = Object.assign(document.createElement('a'), { href: url, download: filename });
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+  } catch (e) {
+    console.warn('Download failed:', e);
+  }
+}
+
+// ─── トースト ─────────────────────────────────────────────────────
+let toastTimer = null;
+function showToast(msg) {
+  toast.textContent = msg;
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 3000);
+}
+
+// ─── イベント ─────────────────────────────────────────────────────
+bridgeSel.addEventListener('change', onBridgeChange);
+pointSel.addEventListener('change',  refreshUI);
+captureBtn.addEventListener('click',  doCapture);
+retryBtn.addEventListener('click',    startCamera);
+
+// CSV ボタン → ガイドモーダルを開く
+csvBtn.addEventListener('click', () => csvGuide.classList.add('visible'));
+
+// ガイドモーダル内「CSVファイルを選択」
+guideLoadBtn.addEventListener('click', () => csvInput.click());
+
+// ガイドを閉じる
+guideCloseBtn.addEventListener('click', () => csvGuide.classList.remove('visible'));
+
+// ファイル選択後
+csvInput.addEventListener('change', e => {
+  handleCSVFile(e.target.files[0]);
+  csvInput.value = ''; // 同じファイルを再選択できるようにリセット
+});
+
+btnClose.addEventListener('click', () => {
+  modal.classList.remove('visible');
+  modalImg.src = '';
+});
+
+btnSave.addEventListener('click', () => {
+  if (savedDataUrl && savedFilename) triggerDownload(savedDataUrl, savedFilename);
+});
+
+// ─── 起動 ────────────────────────────────────────────────────────
+rebuildDropdowns();
+updateDataSourceBar();
+startCamera();
+
+// ─── Service Worker 登録 ─────────────────────────────────────────
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/field-camera/sw.js')
+      .catch(err => console.warn('SW registration failed:', err));
+  });
+}
+</script>
+</body>
+</html>
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
