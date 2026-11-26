@@ -545,6 +545,21 @@
             </svg>
           </div>
         </div>
+        <div class="select-wrapper">
+          <div class="select-label">保存解像度</div>
+          <div class="select-outer">
+            <select id="res-select">
+              <option value="640x480">640×480（VGA）</option>
+              <option value="1280x960">1280×960（標準）</option>
+              <option value="1600x1200">1600×1200</option>
+              <option value="2048x1536">2048×1536</option>
+              <option value="max">最大（カメラ原寸）</option>
+            </select>
+            <svg class="chevron" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M7 10l5 5 5-5z"/>
+            </svg>
+          </div>
+        </div>
       </div>
 
       <div id="bottom-bar">
@@ -614,7 +629,7 @@
   <h2>📂 CSVファイルの読み込み</h2>
   <div class="guide-box">
     <p>以下の形式で作成した CSV ファイルを読み込んでください。<br>
-       Excel で編集後、「名前を付けて保存 → CSV UTF-8」で保存できます。</p>
+       Excel の「CSV UTF-8」「CSV（コンマ区切り）＝Shift-JIS」のどちらで保存しても読み込めます（文字コードは自動判定）。</p>
     <pre>橋名,撮影ポイント
 あやめ橋,A1橋台-前面
 あやめ橋,A2橋台-背面
@@ -640,6 +655,8 @@ const DEFAULT_BRIDGES = {
 
 const STORAGE_KEY  = 'field-camera-bridges';
 const FILENAME_KEY = 'field-camera-filename';
+const RES_KEY      = 'field-camera-resolution';
+const DEFAULT_RES  = '1280x960';
 
 // ─── 状態 ────────────────────────────────────────────────────────
 let BRIDGES     = loadBridgesFromStorage();
@@ -675,6 +692,29 @@ const guideCloseBtn   = $('guide-close-btn');
 const dataSourceText  = $('data-source-text');
 const toast           = $('toast');
 const rotateOverlay   = $('rotate-overlay');
+const resSel          = $('res-select');
+
+// ─── 保存解像度 ───────────────────────────────────────────────────
+function loadResolution() {
+  let v = null;
+  try { v = localStorage.getItem(RES_KEY); } catch (_) {}
+  const valid = [...resSel.options].some(o => o.value === v);
+  resSel.value = valid ? v : DEFAULT_RES;
+}
+
+function saveResolution() {
+  try { localStorage.setItem(RES_KEY, resSel.value); } catch (_) {}
+}
+
+// 出力サイズを決定（4:3 固定。「最大」はカメラ映像から切り出せる最大の 4:3）
+function getOutputSize(vw, vh) {
+  if (resSel.value === 'max') {
+    if (vw / vh > 4 / 3) return { w: Math.round(vh * 4 / 3), h: vh };
+    return { w: vw, h: Math.round(vw * 3 / 4) };
+  }
+  const [w, h] = resSel.value.split('x').map(Number);
+  return { w, h };
+}
 
 // ─── localStorage ────────────────────────────────────────────────
 function loadBridgesFromStorage() {
@@ -728,11 +768,29 @@ function parseCSV(text) {
   return Object.keys(bridges).length > 0 ? bridges : null;
 }
 
+// 文字コード自動判定：UTF-8 として不正なバイト列なら Shift-JIS とみなす
+function decodeCSVBuffer(buffer) {
+  const bytes = new Uint8Array(buffer);
+  try {
+    return { text: new TextDecoder('utf-8', { fatal: true }).decode(bytes), encoding: 'UTF-8' };
+  } catch (_) {
+    return { text: new TextDecoder('shift_jis').decode(bytes), encoding: 'Shift-JIS' };
+  }
+}
+
 function handleCSVFile(file) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = e => {
-    const bridges = parseCSV(e.target.result);
+    let text;
+    try {
+      text = decodeCSVBuffer(e.target.result).text;
+    } catch (err) {
+      console.error('CSV decode:', err);
+      showToast('❌ 文字コードを判定できませんでした');
+      return;
+    }
+    const bridges = parseCSV(text);
     if (!bridges) { showToast('❌ CSVの形式が正しくありません'); return; }
     BRIDGES = bridges;
     saveBridgesToStorage(bridges, file.name);
@@ -744,7 +802,7 @@ function handleCSVFile(file) {
     showToast(`✅ ${bc}橋・${pc}ポイントを読み込みました`);
   };
   reader.onerror = () => showToast('❌ ファイルの読み込みに失敗しました');
-  reader.readAsText(file, 'UTF-8');
+  reader.readAsArrayBuffer(file);
 }
 
 // ─── ドロップダウン ───────────────────────────────────────────────
@@ -794,12 +852,60 @@ function refreshUI() {
 setInterval(refreshUI, 1000);
 
 // ─── カメラ起動 ───────────────────────────────────────────────────
-async function startCamera() {
+let cameraStarting   = false;
+let autoRetryTimer   = null;
+let autoRetryCount   = 0;
+const MAX_AUTO_RETRY = 5;
+
+function stopCamera() {
+  const stream = video.srcObject;
+  if (stream) stream.getTracks().forEach(t => { t.onended = null; t.stop(); });
+  video.srcObject = null;
+  cameraReady = false;
+}
+
+// カメラが生きているか（トラック終了・映像停止を検知）
+function isCameraAlive() {
+  const stream = video.srcObject;
+  if (!stream) return false;
+  const track = stream.getVideoTracks()[0];
+  if (!track || track.readyState !== 'live') return false;
+  if (video.paused || video.readyState < 2) return false;
+  return true;
+}
+
+// 異常を検知したら自動で再起動
+function restartCamera(reason) {
+  if (cameraStarting || document.hidden) return;
+  if (modal.classList.contains('visible')) return; // 撮影結果の確認中は邪魔しない
+  console.warn('Camera restart:', reason);
+  stopCamera();
+  startCamera({ auto: true });
+}
+
+function scheduleAutoRetry() {
+  clearTimeout(autoRetryTimer);
+  if (autoRetryCount >= MAX_AUTO_RETRY) return;
+  const delay = Math.min(2000 * 2 ** autoRetryCount, 15000);
+  autoRetryCount++;
+  ovSub.textContent += `\n${Math.round(delay / 1000)}秒後に自動で再試行します…（${autoRetryCount}/${MAX_AUTO_RETRY}）`;
+  autoRetryTimer = setTimeout(() => restartCamera('auto-retry'), delay);
+}
+
+async function startCamera(opts = {}) {
+  if (cameraStarting) return;
+  cameraStarting = true;
+  clearTimeout(autoRetryTimer);
+  if (!opts.auto) autoRetryCount = 0; // 手動の再試行で回数をリセット
+  stopCamera();
+
   cameraOverlay.classList.add('visible');
-  ovTitle.textContent    = 'カメラを起動中...';
+  ovTitle.textContent    = opts.auto ? 'カメラを再起動中...' : 'カメラを起動中...';
   ovSub.textContent      = 'カメラの使用許可を求められたら「許可」を選択してください。';
+  ovSub.style.whiteSpace = 'pre-line';
   retryBtn.style.display = 'none';
   cameraReady            = false;
+  refreshUI();
 
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -811,13 +917,19 @@ async function startCamera() {
       },
       audio: false,
     });
+    // 他アプリにカメラを奪われた・接続が切れた等でトラックが終了したら再起動
+    stream.getVideoTracks().forEach(t => {
+      t.onended = () => restartCamera('track ended');
+    });
     video.srcObject = stream;
     await video.play();
     cameraOverlay.classList.remove('visible');
     cameraReady = true;
+    autoRetryCount = 0;
     refreshUI();
   } catch (err) {
     console.error('Camera:', err);
+    stopCamera();
     if (err.name === 'NotAllowedError') {
       ovTitle.textContent = 'カメラの許可が必要です';
       ovSub.textContent   = '設定アプリ → Safari → カメラ → 「許可」に変更してください。';
@@ -833,8 +945,32 @@ async function startCamera() {
     }
     retryBtn.style.display = 'block';
     refreshUI();
+    // 許可拒否・HTTPS 不可は再試行しても直らないので自動再試行しない
+    const permanent = err.name === 'NotAllowedError' || err.name === 'SecurityError'
+      || (!location.protocol.startsWith('https') && location.hostname !== 'localhost');
+    if (!permanent) scheduleAutoRetry();
+  } finally {
+    cameraStarting = false;
   }
 }
+
+// ─── カメラ自動復帰 ───────────────────────────────────────────────
+// アプリ切替・画面ロックから戻ったとき
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && !isCameraAlive()) restartCamera('visible');
+});
+// bfcache から復帰したとき
+window.addEventListener('pageshow', e => {
+  if (e.persisted && !isCameraAlive()) restartCamera('pageshow');
+});
+// 映像が一時停止された場合はまず再生再開を試みる
+video.addEventListener('pause', () => {
+  if (cameraReady && !document.hidden) video.play().catch(() => restartCamera('pause'));
+});
+// 定期監視（無音で止まるケースの保険）
+setInterval(() => {
+  if (cameraReady && !document.hidden && !isCameraAlive()) restartCamera('watchdog');
+}, 3000);
 
 // ─── 撮影 ────────────────────────────────────────────────────────
 function doCapture() {
@@ -842,10 +978,9 @@ function doCapture() {
   const filename = buildFilename();
   if (!filename) return;
 
-  const OUT_W = 1280;
-  const OUT_H = 960;
-  const vw = video.videoWidth  || OUT_W;
-  const vh = video.videoHeight || OUT_H;
+  const vw = video.videoWidth  || 1280;
+  const vh = video.videoHeight || 960;
+  const { w: OUT_W, h: OUT_H } = getOutputSize(vw, vh);
   const srcRatio = vw / vh;
   const dstRatio = OUT_W / OUT_H;
   let srcX, srcY, srcW, srcH;
@@ -871,7 +1006,7 @@ function doCapture() {
   shotBadge.style.display = 'block';
 
   modalImg.src = dataUrl;
-  modalFilenameEl.textContent = filename;
+  modalFilenameEl.textContent = `${filename}（${OUT_W}×${OUT_H}）`;
   modal.classList.add('visible');
   triggerDownload(dataUrl, filename);
 }
@@ -918,7 +1053,8 @@ window.addEventListener('orientationchange', checkOrientation);
 bridgeSel.addEventListener('change', onBridgeChange);
 pointSel.addEventListener('change',  refreshUI);
 captureBtn.addEventListener('click',  doCapture);
-retryBtn.addEventListener('click',    startCamera);
+retryBtn.addEventListener('click',    () => startCamera());
+resSel.addEventListener('change', () => { saveResolution(); showToast(`保存解像度: ${resSel.options[resSel.selectedIndex].text}`); });
 csvBtn.addEventListener('click', () => csvGuide.classList.add('visible'));
 guideLoadBtn.addEventListener('click', () => csvInput.click());
 guideCloseBtn.addEventListener('click', () => csvGuide.classList.remove('visible'));
@@ -927,6 +1063,7 @@ btnClose.addEventListener('click', () => { modal.classList.remove('visible'); mo
 btnSave.addEventListener('click', () => { if (savedDataUrl && savedFilename) triggerDownload(savedDataUrl, savedFilename); });
 
 // ─── 起動 ────────────────────────────────────────────────────────
+loadResolution();
 rebuildDropdowns();
 updateDataSourceBar();
 startCamera();
