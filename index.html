@@ -234,7 +234,54 @@
       display: block;
     }
 
+    #video-container { touch-action: none; } /* ピンチでページ自体が拡大されないように */
+
+    #video { transform-origin: center center; }
+
+    /* ── ズーム ── */
+    #zoom-bar {
+      position: absolute;
+      right: 12px;
+      bottom: max(12px, env(safe-area-inset-bottom));
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      z-index: 2;
+    }
+
+    .zoom-btn {
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      border: 1.5px solid rgba(255,255,255,0.5);
+      background: rgba(0,0,0,0.55);
+      color: #fff;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .zoom-btn.active {
+      background: #ff9500;
+      border-color: #ff9500;
+    }
+
+    .zoom-btn:active { transform: scale(0.94); }
+
+    #zoom-label {
+      display: none;
+      padding: 6px 10px;
+      border-radius: 14px;
+      background: rgba(0,0,0,0.6);
+      color: #ff9500;
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    #zoom-label.visible { display: block; }
+
     #camera-overlay {
+      z-index: 3;
       display: none;
       position: absolute;
       inset: 0;
@@ -580,6 +627,12 @@
     <!-- 右パネル（カメラ） -->
     <div id="video-container">
       <video id="video" autoplay playsinline muted></video>
+      <div id="zoom-bar">
+        <div id="zoom-label"></div>
+        <button class="zoom-btn active" data-zoom="1">1×</button>
+        <button class="zoom-btn" data-zoom="2">2×</button>
+        <button class="zoom-btn" data-zoom="4">4×</button>
+      </div>
       <div id="camera-overlay" class="visible">
         <div class="ov-icon">📷</div>
         <div class="ov-title">カメラを起動中...</div>
@@ -693,6 +746,9 @@ const dataSourceText  = $('data-source-text');
 const toast           = $('toast');
 const rotateOverlay   = $('rotate-overlay');
 const resSel          = $('res-select');
+const videoContainer  = $('video-container');
+const zoomBtns        = [...document.querySelectorAll('.zoom-btn')];
+const zoomLabel       = $('zoom-label');
 
 // ─── 保存解像度 ───────────────────────────────────────────────────
 function loadResolution() {
@@ -706,12 +762,19 @@ function saveResolution() {
   try { localStorage.setItem(RES_KEY, resSel.value); } catch (_) {}
 }
 
-// 出力サイズを決定（4:3 固定。「最大」はカメラ映像から切り出せる最大の 4:3）
-function getOutputSize(vw, vh) {
-  if (resSel.value === 'max') {
-    if (vw / vh > 4 / 3) return { w: Math.round(vh * 4 / 3), h: vh };
-    return { w: vw, h: Math.round(vw * 3 / 4) };
-  }
+// カメラ映像から切り出す範囲（中央の 4:3 を、デジタルズーム倍率ぶん狭める）
+function computeCrop(vw, vh, digital = 1) {
+  let srcW, srcH;
+  if (vw / vh > 4 / 3) { srcH = vh; srcW = vh * 4 / 3; }
+  else                 { srcW = vw; srcH = vw * 3 / 4; }
+  const d = Math.max(1, digital);
+  srcW /= d; srcH /= d;
+  return { srcX: (vw - srcW) / 2, srcY: (vh - srcH) / 2, srcW, srcH };
+}
+
+// 出力サイズを決定（4:3 固定。「最大」は切り出し範囲の原寸）
+function getOutputSize(srcW, srcH) {
+  if (resSel.value === 'max') return { w: Math.round(srcW), h: Math.round(srcH) };
   const [w, h] = resSel.value.split('x').map(Number);
   return { w, h };
 }
@@ -987,6 +1050,7 @@ async function startCamera(opts = {}) {
     cameraOverlay.classList.remove('visible');
     cameraReady = true;
     autoRetryCount = 0;
+    onCameraStartedForZoom(); // 再起動後も倍率を引き継ぐ
     refreshUI();
   } catch (err) {
     console.error('Camera:', err);
@@ -1033,6 +1097,110 @@ setInterval(() => {
   if (cameraReady && !document.hidden && !isCameraAlive()) restartCamera('watchdog');
 }, 3000);
 
+// ─── ズーム ──────────────────────────────────────────────────────
+// カメラのズーム機能が使える端末ではそれを優先し、足りない分・使えない端末はデジタルズーム
+const MAX_ZOOM     = 8;
+const ZOOM_PRESETS = [1, 2, 4];
+const zoomState = {
+  level:   1,     // 利用者から見た倍率
+  hw:      null,  // カメラのズーム能力 { min, max, base } または null
+  hwValue: null,  // カメラに指示している値
+  digital: 1,     // デジタルズーム倍率（プレビューと撮影の切り出しに使用）
+};
+
+function detectHwZoom() {
+  zoomState.hw = null;
+  zoomState.hwValue = null;
+  const track = video.srcObject && video.srcObject.getVideoTracks()[0];
+  if (!track || typeof track.getCapabilities !== 'function') return;
+  let caps;
+  try { caps = track.getCapabilities(); } catch (_) { return; }
+  const z = caps && caps.zoom;
+  if (!z || typeof z.min !== 'number' || typeof z.max !== 'number' || z.max <= z.min) return;
+  // 超広角（0.5 など）を持つ機種もあるので、1 が範囲内なら 1 を等倍とする
+  const base = (z.min <= 1 && z.max >= 1) ? 1 : z.min;
+  zoomState.hw = { min: z.min, max: z.max, base };
+}
+
+// 倍率を「カメラのズーム値」と「デジタルズーム倍率」に分ける
+function splitZoom(level, hw) {
+  if (!hw) return { hwValue: null, digital: level };
+  const want    = hw.base * level;
+  const hwValue = Math.min(Math.max(want, hw.min), hw.max);
+  return { hwValue, digital: Math.max(1, want / hwValue) };
+}
+
+let hwApplyPending = null;
+function applyHwZoom(value) {
+  const track = video.srcObject && video.srcObject.getVideoTracks()[0];
+  if (!track) return;
+  // 連続で呼ばれたら最後の値だけを送る
+  const run = () => {
+    const v = hwApplyPending;
+    track.applyConstraints({ advanced: [{ zoom: v }] })
+      .catch(err => {
+        // 端末が受け付けなかったらデジタルズームに切り替える
+        console.warn('HW zoom failed, fallback to digital:', err);
+        zoomState.hw = null;
+        setZoom(zoomState.level);
+      })
+      .finally(() => {
+        if (hwApplyPending !== v) run(); else hwApplyPending = null;
+      });
+  };
+  const idle = hwApplyPending === null;
+  hwApplyPending = value;
+  if (idle) run();
+}
+
+function setZoom(level) {
+  level = Math.min(Math.max(level, 1), MAX_ZOOM);
+  zoomState.level = level;
+  const { hwValue, digital } = splitZoom(level, zoomState.hw);
+  zoomState.digital = digital;
+  if (hwValue !== null && hwValue !== zoomState.hwValue) {
+    zoomState.hwValue = hwValue;
+    applyHwZoom(hwValue);
+  }
+  video.style.transform = digital > 1.001 ? `scale(${digital})` : '';
+  updateZoomUI();
+}
+
+function updateZoomUI() {
+  const lv = zoomState.level;
+  zoomBtns.forEach(b => {
+    b.classList.toggle('active', Math.abs(Number(b.dataset.zoom) - lv) < 0.05);
+  });
+  zoomLabel.textContent = `${lv < 10 ? lv.toFixed(1) : Math.round(lv)}×`;
+  zoomLabel.classList.toggle('visible', !ZOOM_PRESETS.some(p => Math.abs(p - lv) < 0.05));
+}
+
+// カメラ起動・再起動のたびに呼ぶ
+function onCameraStartedForZoom() {
+  detectHwZoom();
+  setZoom(zoomState.level);
+}
+
+// 2本指でつまむ操作
+let pinch = null;
+const touchDist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+videoContainer.addEventListener('touchstart', e => {
+  if (e.touches.length === 2) {
+    pinch = { dist: touchDist(e.touches), level: zoomState.level };
+    e.preventDefault();
+  }
+}, { passive: false });
+videoContainer.addEventListener('touchmove', e => {
+  if (!pinch || e.touches.length !== 2) return;
+  e.preventDefault();
+  setZoom(pinch.level * touchDist(e.touches) / pinch.dist);
+}, { passive: false });
+videoContainer.addEventListener('touchend', e => {
+  if (e.touches.length < 2) pinch = null;
+});
+
+zoomBtns.forEach(b => b.addEventListener('click', () => setZoom(Number(b.dataset.zoom))));
+
 // ─── 撮影 ────────────────────────────────────────────────────────
 function doCapture() {
   if (!cameraReady || !video.srcObject) return;
@@ -1041,15 +1209,8 @@ function doCapture() {
 
   const vw = video.videoWidth  || 1280;
   const vh = video.videoHeight || 960;
-  const { w: OUT_W, h: OUT_H } = getOutputSize(vw, vh);
-  const srcRatio = vw / vh;
-  const dstRatio = OUT_W / OUT_H;
-  let srcX, srcY, srcW, srcH;
-  if (srcRatio > dstRatio) {
-    srcH = vh; srcW = vh * dstRatio; srcX = (vw - srcW) / 2; srcY = 0;
-  } else {
-    srcW = vw; srcH = vw / dstRatio; srcX = 0; srcY = (vh - srcH) / 2;
-  }
+  const { srcX, srcY, srcW, srcH } = computeCrop(vw, vh, zoomState.digital);
+  const { w: OUT_W, h: OUT_H } = getOutputSize(srcW, srcH);
   canvas.width  = OUT_W;
   canvas.height = OUT_H;
   canvas.getContext('2d').drawImage(video, srcX, srcY, srcW, srcH, 0, 0, OUT_W, OUT_H);
