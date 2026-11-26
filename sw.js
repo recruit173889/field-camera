@@ -1,6 +1,6 @@
 // Service Worker for 現場撮影アプリ
 // バージョンを上げると古いキャッシュが自動削除されます
-const CACHE_NAME = 'field-camera-v4';
+const CACHE_NAME = 'field-camera-v5';
 
 const ASSETS = [
   '/field-camera/',
