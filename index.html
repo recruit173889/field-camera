@@ -752,13 +752,45 @@ function updateDataSourceBar() {
 }
 
 // ─── CSV パース ───────────────────────────────────────────────────
+// RFC 4180 準拠：ダブルクォートで囲まれた項目内のカンマ・改行・"" を正しく扱う
+function parseCSVRows(text) {
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else {
+        field += c;
+      }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ',') {
+      row.push(field); field = '';
+    } else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(field); rows.push(row);
+      row = []; field = '';
+    } else {
+      field += c;
+    }
+  }
+  if (field !== '' || row.length > 0) { row.push(field); rows.push(row); }
+  return rows;
+}
+
 function parseCSV(text) {
   text = text.replace(/^﻿/, '');
-  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  if (lines.length < 2) return null;
+  // 項目内の改行は名前として扱いにくいので空白に置き換える
+  const rows = parseCSVRows(text)
+    .map(r => r.map(c => c.replace(/\s*[\r\n]+\s*/g, ' ').trim()))
+    .filter(r => r.some(c => c !== ''));
+  if (rows.length < 2) return null;
   const bridges = {};
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(',').map(c => c.replace(/^"|"$/g, '').trim());
+  for (let i = 1; i < rows.length; i++) {
+    const cols = rows[i];
     const bridge = cols[0];
     const point  = cols[1];
     if (!bridge || !point) continue;
@@ -829,11 +861,40 @@ function onBridgeChange() {
 }
 
 // ─── ファイル名 & UI ──────────────────────────────────────────────
+// ファイル名に使えない文字を全角に置き換える
+const UNSAFE_CHARS = { '/':'／', '\\':'＼', ':':'：', '*':'＊', '?':'？', '"':'”', '<':'＜', '>':'＞', '|':'｜' };
+function sanitizeName(s) {
+  return String(s)
+    .replace(/[\/\\:*?"<>|]/g, c => UNSAFE_CHARS[c])
+    .replace(/[\x00-\x1f\x7f]/g, '')
+    .trim();
+}
+
+function timestamp(d = new Date()) {
+  const z = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}`;
+}
+
+// 同じ分に同じポイントを撮った回数（重複したら _2, _3… を付ける）
+const usedNames = new Map();
+
+// プレビュー用：撮影時刻部分は表示時点の時刻
 function buildFilename() {
   const b = bridgeSel.value;
   const p = pointSel.value;
   if (!b || !p) return null;
-  return `${b}_${p}.jpg`;
+  return `${sanitizeName(b)}_${sanitizeName(p)}_${timestamp()}.jpg`;
+}
+
+// 撮影用：重複しないファイル名を確定する
+function buildCaptureFilename() {
+  const b = bridgeSel.value;
+  const p = pointSel.value;
+  if (!b || !p) return null;
+  const base = `${sanitizeName(b)}_${sanitizeName(p)}_${timestamp()}`;
+  const n = (usedNames.get(base) || 0) + 1;
+  usedNames.set(base, n);
+  return n === 1 ? `${base}.jpg` : `${base}_${n}.jpg`;
 }
 
 function refreshUI() {
@@ -975,7 +1036,7 @@ setInterval(() => {
 // ─── 撮影 ────────────────────────────────────────────────────────
 function doCapture() {
   if (!cameraReady || !video.srcObject) return;
-  const filename = buildFilename();
+  const filename = buildCaptureFilename();
   if (!filename) return;
 
   const vw = video.videoWidth  || 1280;
